@@ -10,11 +10,14 @@ import random
 import warnings
 from datetime import datetime
 
+import cv2
 import numpy as np
 from tqdm import tqdm
 
 from sklearn.model_selection import train_test_split
 from skimage.io import imread, imsave
+
+from sklearn.metrics import confusion_matrix
 
 import torch
 import torch.nn as nn
@@ -36,6 +39,7 @@ from utils import str2bool, count_params
 import joblib
 from hausdorff import hausdorff_distance
 import imageio
+# from torchsummary import summary
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -95,9 +99,6 @@ def main():
 
     if val_args.mode == "GetPicture":
 
-        """
-        获取并保存模型生成的标签图
-        """
         with warnings.catch_warnings():
             warnings.simplefilter('ignore')
 
@@ -105,21 +106,25 @@ def main():
                 for i, (input, target) in tqdm(enumerate(val_loader), total=len(val_loader)):
                     # input = input.cuda()
                     # #target = target.cuda()
-
+                    
                     # compute output
                     if args.deepsupervision:
                         output = model(input)[-1]
                     else:
                         output = model(input)
+                        
                     #print("img_paths[i]:%s" % img_paths[i])
                     output = torch.sigmoid(output).data.cpu().numpy()
+                    print(output)
+                    # color_img = cv2.resize(output,(224,224))
+                    # cv2.imshow("output",color_img)
+                    # cv2.waitKey(0)
                     img_paths = val_img_paths[args.batch_size*i:args.batch_size*(i+1)]
                     #print("output_shape:%s"%str(output.shape))
 
 
                     for i in range(output.shape[0]):
                         """
-                        生成灰色圖片
                         wtName = os.path.basename(img_paths[i])
                         overNum = wtName.find(".npy")
                         wtName = wtName[0:overNum]
@@ -158,9 +163,7 @@ def main():
                         imsave('output/%s/'%args.name + rgbName,rgbPic)
 
             # torch.cuda.empty_cache()
-        """
-        将验证集中的GT numpy格式转换成图片格式并保存
-        """
+       
         print("Saving GT,numpy to picture")
         val_gt_path = 'output/%s/'%args.name + "GT/"
         if not os.path.exists(val_gt_path):
@@ -177,17 +180,17 @@ def main():
             GtColor = np.zeros([npmask.shape[0],npmask.shape[1],3], dtype=np.uint8)
             for idx in range(npmask.shape[0]):
                 for idy in range(npmask.shape[1]):
-                    #坏疽(NET,non-enhancing tumor)(标签1) 红色
+                   
                     if npmask[idx, idy] == 1:
                         GtColor[idx, idy, 0] = 255
                         GtColor[idx, idy, 1] = 0
                         GtColor[idx, idy, 2] = 0
-                    #浮肿区域(ED,peritumoral edema) (标签2) 绿色
+                   
                     elif npmask[idx, idy] == 2:
                         GtColor[idx, idy, 0] = 0
                         GtColor[idx, idy, 1] = 128
                         GtColor[idx, idy, 2] = 0
-                    #增强肿瘤区域(ET,enhancing tumor)(标签4) 黄色
+                    
                     elif npmask[idx, idy] == 4:
                         GtColor[idx, idy, 0] = 255
                         GtColor[idx, idy, 1] = 255
@@ -228,9 +231,7 @@ def main():
 
 
     if val_args.mode == "Calculate":
-        """
-        计算各种指标:Dice、Sensitivity、PPV
-        """
+
         wt_dices = []
         tc_dices = []
         et_dices = []
@@ -254,7 +255,7 @@ def main():
         maskPath = glob("output/%s/" % args.name + "GT\*.png")
         pbPath = glob("output/%s/" % args.name + "*.png")
         if len(maskPath) == 0:
-            print("请先生成图片!")
+            print("No mask found!")
             return
 
         for myi in tqdm(range(len(maskPath))):
@@ -272,22 +273,22 @@ def main():
 
             for idx in range(mask.shape[0]):
                 for idy in range(mask.shape[1]):
-                    # 只要这个像素的任何一个通道有值,就代表这个像素不属于前景,即属于WT区域
+                    
                     if mask[idx, idy, :].any() != 0:
                         wtmaskregion[idx, idy] = 1
                     if pb[idx, idy, :].any() != 0:
                         wtpbregion[idx, idy] = 1
-                    # 只要第一个通道是255,即可判断是TC区域,因为红色和黄色的第一个通道都是255,区别于绿色
+                    
                     if mask[idx, idy, 0] == 255:
                         tcmaskregion[idx, idy] = 1
                     if pb[idx, idy, 0] == 255:
                         tcpbregion[idx, idy] = 1
-                    # 只要第二个通道是128,即可判断是ET区域
+                    
                     if mask[idx, idy, 1] == 128:
                         etmaskregion[idx, idy] = 1
                     if pb[idx, idy, 1] == 128:
                         etpbregion[idx, idy] = 1
-            #开始计算WT
+           
             dice = dice_coef(wtpbregion,wtmaskregion)
             wt_dices.append(dice)
             ppv_n = ppv(wtpbregion, wtmaskregion)
@@ -296,7 +297,7 @@ def main():
             wt_Hausdorf.append(Hausdorff)
             sensitivity_n = sensitivity(wtpbregion, wtmaskregion)
             wt_sensitivities.append(sensitivity_n)
-            # 开始计算TC
+      
             dice = dice_coef(tcpbregion, tcmaskregion)
             tc_dices.append(dice)
             ppv_n = ppv(tcpbregion, tcmaskregion)
@@ -305,7 +306,7 @@ def main():
             tc_Hausdorf.append(Hausdorff)
             sensitivity_n = sensitivity(tcpbregion, tcmaskregion)
             tc_sensitivities.append(sensitivity_n)
-            # 开始计算ET
+   
             dice = dice_coef(etpbregion, etmaskregion)
             et_dices.append(dice)
             ppv_n = ppv(etpbregion, etmaskregion)
@@ -331,9 +332,45 @@ def main():
         print('TC Hausdorff: %.4f' % np.mean(tc_Hausdorf))
         print('ET Hausdorff: %.4f' % np.mean(et_Hausdorf))
         print("=============")
+        print_iou_score()
 
 
+def load_images_from_folder(folder):
+    images = []
+    for filename in os.listdir(folder):
+        img = cv2.imread(os.path.join(folder,filename))
+        if img is not None:
+            images.append(np.asarray(img, dtype=np.float32))
+    return images
+
+
+def iou_score(output, target):
+    # smooth = 1e-5
+
+    output_ = output > 0.5
+    target_ = target > 0.5
+    intersection = (output_ & target_).sum()
+    union = (output_ | target_).sum()
+
+    return (intersection ) / (union )
+
+def print_iou_score():
+    
+
+    gt = load_images_from_folder(r"C:\Users\NIT\Desktop\DenseUnet_BraTs\output\jiu0Monkey_Dense_Unet_woDS\GT")
+    pred = load_images_from_folder(r"C:\Users\NIT\Desktop\DenseUnet_BraTs\output\jiu0Monkey_Dense_Unet_woDS\pred")
+
+    totalScrore = 0
+    for i in range(len(gt)):
+        gtCurr = gt[i]
+        predCurr = pred[i]
+        score = "{:.4f}".format(iou_score(gtCurr,predCurr))
+        totalScrore += float(score)
+        print(str(i+1)+" : "+score)
+    
+    print("Mean Score = "+str(totalScrore/float(len(gt))))
+    
 
 
 if __name__ == '__main__':
-    main( )
+    main()
